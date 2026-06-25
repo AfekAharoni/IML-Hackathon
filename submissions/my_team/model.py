@@ -30,7 +30,6 @@ class ResidualBlock(nn.Module):
             ),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(),
-
             nn.Conv2d(
                 in_channels=out_channels,
                 out_channels=out_channels,
@@ -41,9 +40,7 @@ class ResidualBlock(nn.Module):
             ),
             nn.BatchNorm2d(out_channels)
         )
-
         self.shortcut = nn.Identity()
-
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv2d(
@@ -55,7 +52,6 @@ class ResidualBlock(nn.Module):
                 ),
                 nn.BatchNorm2d(out_channels)
             )
-
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -81,7 +77,6 @@ class ResidualBlock(nn.Module):
 class ModelArchitecture(nn.Module):
     def __init__(self):
         super(ModelArchitecture, self).__init__()
-
         # Stem: Input size (3, 224, 224) -> Output size (32, 224, 224)
         self.stem = nn.Sequential(
             nn.Conv2d(
@@ -95,34 +90,28 @@ class ModelArchitecture(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU()
         )
-
         # Stage 1: Input size (32, 224, 224) -> Output size (32, 224, 224)
         self.stage1 = nn.Sequential(
             ResidualBlock(in_channels=32, out_channels=32, stride=1),
             ResidualBlock(in_channels=32, out_channels=32, stride=1)
         )
-
         # Stage 2: Input size (32, 224, 224) -> Output size (64, 112, 112)
         self.stage2 = nn.Sequential(
             ResidualBlock(in_channels=32, out_channels=64, stride=2),
             ResidualBlock(in_channels=64, out_channels=64, stride=1)
         )
-
         # Stage 3: Input size (64, 112, 112) -> Output size (128, 56, 56)
         self.stage3 = nn.Sequential(
             ResidualBlock(in_channels=64, out_channels=128, stride=2),
             ResidualBlock(in_channels=128, out_channels=128, stride=1)
         )
-
         # Stage 4: Input size (128, 56, 56) -> Output size (256, 28, 28)
         self.stage4 = nn.Sequential(
             ResidualBlock(in_channels=128, out_channels=256, stride=2),
             ResidualBlock(in_channels=256, out_channels=256, stride=1)
         )
-
         # Global Average Pooling reduces (256, 28, 28) to (256, 1, 1)
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
-
         # Final classifier: 256 extracted features -> 20 class logits
         self.classifier = nn.Linear(in_features=256, out_features=20)
 
@@ -145,12 +134,10 @@ class ModelArchitecture(nn.Module):
             4. The classifier converts the final 256 features into 20 logits.
         """
         x = self.stem(x)
-
         x = self.stage1(x)
         x = self.stage2(x)
         x = self.stage3(x)
         x = self.stage4(x)
-
         x = self.global_pool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)

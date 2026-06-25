@@ -50,7 +50,6 @@ def main():
         num_workers=0,
     )
 
-    # TODO: create your model
     # Instantiate the model and move it to the computed device
     model = ModelArchitecture().to(device)
 
