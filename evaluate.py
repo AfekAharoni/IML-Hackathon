@@ -6,11 +6,6 @@ Expected submissions layout:
       model.py
       predict.py
       weights.joblib
-    team_b/
-      train.py
-      model.py
-      predict.py
-      weights.joblib
 
 Run:
   python evaluate.py
@@ -21,7 +16,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from torchvision import transforms
 
 from labels import (
@@ -30,19 +25,18 @@ from labels import (
     TARGET_HF_INDICES,
 )
 
-# ── editable ──────────────────────────────────────────────────────────────────
-DATA_ROOT = Path("dataset")   # contains train/ and validation/
+
+DATA_ROOT = Path("dataset")
 SUBMISSIONS_DIR = Path("submissions")
 BATCH_SIZE = 64
 WEIGHTS_FILENAME = "weights.joblib"
-# ──────────────────────────────────────────────────────────────────────────────
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD  = (0.229, 0.224, 0.225)
+IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class ImageNetSubset(Dataset):
-    """Loads the 20 target classes from data/dataset/validation."""
+    """Loads the 20 target classes from a split folder."""
 
     def __init__(self, root: Path, split: str = "validation", transform=None):
         self.transform = transform
@@ -52,8 +46,8 @@ class ImageNetSubset(Dataset):
 
         if not split_root.exists():
             raise FileNotFoundError(
-                f"Validation folder not found: {split_root}\n"
-                f"Expected structure: {root}/validation/<class_name>/*.jpg"
+                f"Folder not found: {split_root}\n"
+                f"Expected structure: {root}/{split}/<class_name>/*.jpg"
             )
 
         for hf_idx in sorted(TARGET_HF_INDICES):
@@ -61,13 +55,17 @@ class ImageNetSubset(Dataset):
             class_dir = split_root / class_name
 
             if not class_dir.exists():
-                raise FileNotFoundError(
-                    f"Class folder not found: {class_dir}"
-                )
+                raise FileNotFoundError(f"Class folder not found: {class_dir}")
 
             local_idx = HF_INDEX_TO_IDX[hf_idx]
 
-            for img_path in sorted(class_dir.glob("*.jpg")):
+            image_paths = []
+            image_paths.extend(class_dir.glob("*.jpg"))
+            image_paths.extend(class_dir.glob("*.jpeg"))
+            image_paths.extend(class_dir.glob("*.JPEG"))
+            image_paths.extend(class_dir.glob("*.png"))
+
+            for img_path in sorted(image_paths):
                 self.samples.append((img_path, local_idx))
 
     def __len__(self):
@@ -83,21 +81,51 @@ class ImageNetSubset(Dataset):
         return image, label
 
 
-def load_test_set():
-    transform = transforms.Compose([
+def build_eval_transform():
+    return transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
 
-    dataset = ImageNetSubset(DATA_ROOT, split="validation", transform=transform)
-    print(f"Loaded {len(dataset)} validation images across {len(TARGET_HF_INDICES)} classes.\n")
 
+def load_clean_split(split: str):
+    dataset = ImageNetSubset(
+        DATA_ROOT / "train",
+        split=split,
+        transform=build_eval_transform(),
+    )
+    print(f"Loaded {len(dataset)} clean {split} images.")
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 
-# ── submission loading ────────────────────────────────────────────────────────
+def load_augmentation_split(split: str):
+    augmentations_root = DATA_ROOT / "augmentations" / split
+
+    if not augmentations_root.exists():
+        raise FileNotFoundError(
+            f"Augmentation {split} folder not found: {augmentations_root}"
+        )
+
+    datasets = []
+    for augmentation_dir in sorted(p for p in augmentations_root.iterdir() if p.is_dir()):
+        dataset = ImageNetSubset(
+            augmentations_root,
+            split=augmentation_dir.name,
+            transform=build_eval_transform(),
+        )
+        datasets.append(dataset)
+
+    if not datasets:
+        raise RuntimeError(
+            f"No augmentation {split} folders found in {augmentations_root}"
+        )
+
+    combined = ConcatDataset(datasets)
+    print(f"Loaded {len(combined)} augmentation {split} images.")
+    return DataLoader(combined, batch_size=BATCH_SIZE, shuffle=False)
+
 
 def load_submission(team_dir: Path):
     predict_path = team_dir / "predict.py"
@@ -111,11 +139,7 @@ def load_submission(team_dir: Path):
     if not weights_path.exists():
         raise FileNotFoundError(f"Missing {WEIGHTS_FILENAME} in {team_dir}")
 
-    # So predict.py can do: from model import ModelArchitecture
     sys.path.insert(0, str(team_dir))
-
-    # Important when grading multiple teams:
-    # prevents Python from reusing a previous team's model.py
     sys.modules.pop("model", None)
 
     try:
@@ -131,7 +155,9 @@ def load_submission(team_dir: Path):
         spec.loader.exec_module(module)
 
         if not hasattr(module, "Model"):
-            raise AttributeError(f"predict.py in {team_dir} must define a class named Model")
+            raise AttributeError(
+                f"predict.py in {team_dir} must define a class named Model"
+            )
 
         model = module.Model()
         model.load(str(weights_path))
@@ -143,24 +169,32 @@ def load_submission(team_dir: Path):
     return model
 
 
-# ── evaluation ────────────────────────────────────────────────────────────────
-
 @torch.no_grad()
 def evaluate(model, loader):
     correct = 0
-    total   = 0
+    total = 0
+
     for x, y in loader:
-        preds    = model.predict(x)
+        preds = model.predict(x)
         correct += (preds == y).sum().item()
-        total   += y.size(0)
+        total += y.size(0)
+
     return correct / total
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
-
 def main():
-    print("Preparing test set...")
-    loader = load_test_set()
+    splits = ["validation", "test"]
+
+    loaders = {}
+    for split in splits:
+        print(f"Preparing clean {split} set...")
+        loaders[("clean", split)] = load_clean_split(split)
+
+        print(f"Preparing augmentation {split} set...")
+        loaders[("augmentations", split)] = load_augmentation_split(split)
+        print()
+
+    print()
 
     team_dirs = sorted(d for d in SUBMISSIONS_DIR.iterdir() if d.is_dir())
     if not team_dirs:
@@ -172,19 +206,49 @@ def main():
         print(f"Evaluating {team_dir.name}...", end=" ", flush=True)
         try:
             model = load_submission(team_dir)
-            acc   = evaluate(model, loader)
-            results.append((team_dir.name, acc))
-            print(f"accuracy: {acc:.4f}")
+            scores = {}
+            for dataset_name in ["clean", "augmentations"]:
+                for split in splits:
+                    scores[(dataset_name, split)] = evaluate(
+                        model,
+                        loaders[(dataset_name, split)],
+                    )
+
+            combined_acc = sum(scores.values()) / len(scores)
+            results.append((team_dir.name, scores, combined_acc))
+
+            print(
+                f"clean_val: {scores[('clean', 'validation')]:.4f} | "
+                f"aug_val: {scores[('augmentations', 'validation')]:.4f} | "
+                f"clean_test: {scores[('clean', 'test')]:.4f} | "
+                f"aug_test: {scores[('augmentations', 'test')]:.4f} | "
+                f"combined: {combined_acc:.4f}"
+            )
         except Exception as e:
-            print(f"FAILED — {e}")
-            results.append((team_dir.name, None))
+            print(f"FAILED - {e}")
+            results.append((team_dir.name, None, None))
 
     print("\n--- Leaderboard ---")
-    ranked = sorted((r for r in results if r[1] is not None), key=lambda r: r[1], reverse=True)
-    for rank, (team, acc) in enumerate(ranked, start=1):
-        print(f"  {rank}. {team:<20} {acc:.4f}")
-    for team, acc in results:
-        if acc is None:
+    ranked = sorted(
+        (r for r in results if r[2] is not None),
+        key=lambda r: r[2],
+        reverse=True,
+    )
+
+    for rank, (team, scores, combined_acc) in enumerate(
+            ranked,
+            start=1):
+        print(
+            f"  {rank}. {team:<20} "
+            f"clean_val={scores[('clean', 'validation')]:.4f} "
+            f"aug_val={scores[('augmentations', 'validation')]:.4f} "
+            f"clean_test={scores[('clean', 'test')]:.4f} "
+            f"aug_test={scores[('augmentations', 'test')]:.4f} "
+            f"combined={combined_acc:.4f}"
+        )
+
+    for team, scores, combined_acc in results:
+        if combined_acc is None:
             print(f"  --  {team:<20} FAILED")
 
 

@@ -1,7 +1,70 @@
 Afek Aharoni,Moria Deri,Shani Rivlin,Adi Navon
 214143414,213787617,213668007,214091498
 
-***TO BE UPDATED - ARCHITECTURE***
+Model architecture:
+
+We used a half-width ResNet-18 style CNN trained from scratch. The model keeps
+the main ResNet idea of residual blocks, where each block learns a correction
+to the input representation and then adds the original shortcut connection back.
+This helps gradient flow and lets us train a deeper CNN than a plain sequential
+network.
+
+The input to the model is an ImageNet-normalized tensor of shape [batch_size, 3,
+224, 224]. The output is a logits tensor of shape [batch_size, 20].
+
+Layer-by-layer structure:
+
+1. Stem:
+   Conv2d 3 -> 32 with kernel size 3 and padding 1, followed by BatchNorm2d and
+   ReLU. 
+   Shape: [B, 3, 224, 224] -> [B, 32, 224, 224].
+
+2. Pool 1:
+   MaxPool2d with kernel size 2 and stride 2. 
+   Shape: [B, 32, 224, 224] -> [B, 32, 112, 112].
+
+3. Stage 1:
+   Two residual blocks with 32 channels. Each block contains two 3x3
+   convolutions with BatchNorm and ReLU, plus a shortcut connection.
+   Shape: [B, 32, 112, 112] -> [B, 32, 112, 112].
+
+4. Pool 2:
+   MaxPool2d reduces the feature map size again.
+   Shape: [B, 32, 112, 112] -> [B, 32, 56, 56].
+
+5. Stage 2:
+   Two residual blocks. The first block increases the channel count from 32 to
+   64 using a 1x1 convolution in the shortcut path, and the second block keeps
+   64 channels.
+   Shape: [B, 32, 56, 56] -> [B, 64, 56, 56].
+
+6. Pool 3:
+   MaxPool2d reduces spatial size.
+   Shape: [B, 64, 56, 56] -> [B, 64, 28, 28].
+
+7. Stage 3:
+   Two residual blocks. The first block increases the channel count from 64 to
+   128, and the second block keeps 128 channels.
+   Shape: [B, 64, 28, 28] -> [B, 128, 28, 28].
+
+8. Pool 4:
+   MaxPool2d reduces spatial size.
+   Shape: [B, 128, 28, 28] -> [B, 128, 14, 14].
+
+9. Stage 4:
+   Two residual blocks. The first block increases the channel count from 128 to
+   256, and the second block keeps 256 channels.
+   Shape: [B, 128, 14, 14] -> [B, 256, 14, 14].
+
+10. Global average pooling:
+    AdaptiveAvgPool2d((1, 1)) summarizes each of the 256 feature maps into one
+    value. This creates a compact image representation before classification.
+    Shape: [B, 256, 14, 14] -> [B, 256, 1, 1].
+
+11. Classifier:
+    The pooled tensor is flattened to [B, 256], then passed through Dropout
+    with p=0.3 and a Linear layer from 256 features to 20 output logits.
+    Shape: [B, 256] -> [B, 20].
 
 Our model is a from-scratch convolutional image classifier for the 20-class
 hackathon task. During development, we started with simpler CNN models and a
@@ -15,7 +78,7 @@ To address this, we increased the number of epochs and experimented with 30
 epochs. This improved training performance, but we observed signs of
 overfitting, where the training loss continued improving while validation
 performance stopped improving or became less stable. We therefore chose a more
-balanced setting of ***TO BE COMPLETE*** epochs, aiming to give the model enough time to learn without fitting too strongly to the training data.
+balanced setting of 17 epochs, aiming to give the model enough time to learn without fitting too strongly to the training data.
 
 We ran the training experiments on Google Colab because the training process was
 too heavy and unstable on our local computers. Using Colab allowed us to avoid
