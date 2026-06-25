@@ -131,7 +131,9 @@ def main():
         # Print all metrics clearly to monitor both standard and robust performance
         print(
             f"Epoch [{epoch + 1}/{EPOCHS}] - Train Loss: {avg_train_loss:.4f} | "
+            f"Clean Val Loss: {avg_clean_val_loss:.4f} | "
             f"Clean Val Acc: {clean_val_accuracy:.2f}% | "
+            f"Robust Val Loss: {avg_robust_val_loss:.4f} | "
             f"Robust Val Acc: {robust_val_accuracy:.2f}%"
         )
 
