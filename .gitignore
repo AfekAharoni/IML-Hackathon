@@ -1,2 +1,3 @@
-train/
-augmentations/
+dataset/augmentations
+dataset/train
+Task.pdf
