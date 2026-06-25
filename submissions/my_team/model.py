@@ -77,43 +77,39 @@ class ResidualBlock(nn.Module):
 class ModelArchitecture(nn.Module):
     def __init__(self):
         super(ModelArchitecture, self).__init__()
-        # Stem: Input size (3, 224, 224) -> Output size (32, 224, 224)
+        # Stem: Input size (3, 224, 224) -> Output size (16, 112, 112)
         self.stem = nn.Sequential(
             nn.Conv2d(
                 in_channels=3,
-                out_channels=32,
+                out_channels=16,
                 kernel_size=3,
-                stride=1,
+                stride=2,
                 padding=1,
                 bias=False
             ),
-            nn.BatchNorm2d(32),
+            nn.BatchNorm2d(16),
             nn.ReLU()
         )
-        # Stage 1: Input size (32, 224, 224) -> Output size (32, 224, 224)
+        # Stage 1: Input size (16, 112, 112) -> Output size (16, 112, 112)
         self.stage1 = nn.Sequential(
-            ResidualBlock(in_channels=32, out_channels=32, stride=1),
-            ResidualBlock(in_channels=32, out_channels=32, stride=1)
+            ResidualBlock(in_channels=16, out_channels=16, stride=1)
         )
-        # Stage 2: Input size (32, 224, 224) -> Output size (64, 112, 112)
+        # Stage 2: Input size (16, 112, 112) -> Output size (32, 56, 56)
         self.stage2 = nn.Sequential(
-            ResidualBlock(in_channels=32, out_channels=64, stride=2),
-            ResidualBlock(in_channels=64, out_channels=64, stride=1)
+            ResidualBlock(in_channels=16, out_channels=32, stride=2)
         )
-        # Stage 3: Input size (64, 112, 112) -> Output size (128, 56, 56)
+        # Stage 3: Input size (32, 56, 56) -> Output size (64, 28, 28)
         self.stage3 = nn.Sequential(
-            ResidualBlock(in_channels=64, out_channels=128, stride=2),
-            ResidualBlock(in_channels=128, out_channels=128, stride=1)
+            ResidualBlock(in_channels=32, out_channels=64, stride=2)
         )
-        # Stage 4: Input size (128, 56, 56) -> Output size (256, 28, 28)
+        # Stage 4: Input size (64, 28, 28) -> Output size (128, 14, 14)
         self.stage4 = nn.Sequential(
-            ResidualBlock(in_channels=128, out_channels=256, stride=2),
-            ResidualBlock(in_channels=256, out_channels=256, stride=1)
+            ResidualBlock(in_channels=64, out_channels=128, stride=2)
         )
-        # Global Average Pooling reduces (256, 28, 28) to (256, 1, 1)
+        # Global Average Pooling reduces (128, 14, 14) to (128, 1, 1)
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
-        # Final classifier: 256 extracted features -> 20 class logits
-        self.classifier = nn.Linear(in_features=256, out_features=20)
+        # Final classifier: 128 extracted features -> 20 class logits
+        self.classifier = nn.Linear(in_features=128, out_features=20)
 
     def forward(self, x):
         """
@@ -128,10 +124,11 @@ class ModelArchitecture(nn.Module):
             class scores, called logits, for the 20 hackathon classes.
 
         Flow:
-            1. The stem converts RGB pixels into 32 low-level feature maps.
-            2. Four residual stages extract deeper visual features.
+            1. The stem converts RGB pixels into 16 low-level feature maps and
+               immediately downsamples the image to reduce CPU cost.
+            2. Four lightweight residual stages extract deeper visual features.
             3. Adaptive average pooling summarizes each feature map.
-            4. The classifier converts the final 256 features into 20 logits.
+            4. The classifier converts the final 128 features into 20 logits.
         """
         x = self.stem(x)
         x = self.stage1(x)

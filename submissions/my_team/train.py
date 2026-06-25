@@ -135,7 +135,6 @@ def main():
             f"Robust Val Acc: {robust_val_accuracy:.2f}%"
         )
 
-    # TODO: save trained model weights to weights.joblib
     # Move model back to CPU before saving to ensure hardware-independent loading later!
     joblib.dump(model.cpu().state_dict(), OUTPUT)
     print("Saved trained weights.joblib")
