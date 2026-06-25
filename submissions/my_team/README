@@ -63,6 +63,11 @@ overfitting, where the training loss continued improving while validation
 performance stopped improving or became less stable. We therefore chose a more
 balanced setting of 17 epochs, aiming to give the model enough time to learn without fitting too strongly to the training data.
 
+Our model is a custom CNN trained from scratch. We first tested the basic
+2-layer model, then tried ResNet-18, but found it too large and slow to train.
+Therefore, we designed an efficient 8-layer model to balance learning capacity
+and training speed.
+
 We ran the training experiments on Google Colab because the training process was
 too heavy and unstable on our local computers. Using Colab allowed us to avoid
 local crashes and improve iteration time while testing different model and
