@@ -19,9 +19,9 @@ from model import ModelArchitecture
 DATA_ROOT = PROJECT_ROOT / "dataset"
 OUTPUT = Path(__file__).resolve().parent / "weights.joblib"
 
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 LEARNING_RATE = 0.001
-EPOCHS = 10  # Number of full passes over the training dataset
+EPOCHS = 12  # Number of full passes over the training dataset
 
 
 def main():
@@ -56,6 +56,12 @@ def main():
     # Define Loss function (CrossEntropyLoss) and Optimizer (Adam)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=0.5,
+        patience=2
+    )
 
     # Begin the training loop
     print("Start training")
@@ -127,6 +133,10 @@ def main():
 
         avg_robust_val_loss = robust_val_loss / len(robust_val_loader)
         robust_val_accuracy = 100 * robust_correct / robust_total
+        combined_val_loss = (avg_clean_val_loss + avg_robust_val_loss) / 2
+
+        scheduler.step(combined_val_loss)
+        current_lr = optimizer.param_groups[0]["lr"]
 
         # Print all metrics clearly to monitor both standard and robust performance
         print(
@@ -134,7 +144,8 @@ def main():
             f"Clean Val Loss: {avg_clean_val_loss:.4f} | "
             f"Clean Val Acc: {clean_val_accuracy:.2f}% | "
             f"Robust Val Loss: {avg_robust_val_loss:.4f} | "
-            f"Robust Val Acc: {robust_val_accuracy:.2f}%"
+            f"Robust Val Acc: {robust_val_accuracy:.2f}% | "
+            f"LR: {current_lr:.6f}"
         )
 
     # Move model back to CPU before saving to ensure hardware-independent loading later!
