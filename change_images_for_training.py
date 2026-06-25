@@ -1,5 +1,5 @@
 from pathlib import Path
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 from torchvision import transforms
 from base_model import ImageNetSubset
 
@@ -65,11 +65,46 @@ def build_dataloaders(data_root=Path("dataset/train"), batch_size=BATCH_SIZE,
                                    num_workers=num_workers)
     return train_loader, validation_loader
 
+def build_robust_validation_loader(
+        clean_data_root=Path("dataset/train"),
+        augmentations_root=Path("dataset/augmentations/validation"),
+        batch_size=BATCH_SIZE,
+        num_workers=2):
+    """
+    Build a robust validation loader from two sources:
+        1. Real validation images with random in-memory manipulations.
+        2. Saved validation augmentation folders, such as color_jitter and
+           random_rotation, with stable evaluation preprocessing.
+
+    This lets clean validation measure real images only, while robust
+    validation measures manipulated images.
+    """
+    clean_data_root = Path(clean_data_root)
+    augmentations_root = Path(augmentations_root)
+
+    robust_datasets = [
+        ImageNetSubset(
+            root=clean_data_root,
+            split="validation",
+            transform=build_train_transform())
+    ]
+
+    if augmentations_root.exists():
+        for augmentation_dir in sorted(p for p in augmentations_root.iterdir()
+                                       if p.is_dir()):
+            robust_datasets.append(
+                ImageNetSubset(
+                    root=augmentations_root,
+                    split=augmentation_dir.name,
+                    transform=build_eval_transform()))
+
+    robust_dataset = ConcatDataset(robust_datasets)
+    return DataLoader(robust_dataset, batch_size=batch_size, shuffle=False,
+                      num_workers=num_workers)
+
 if __name__ == "__main__":
     train_loader, validation_loader = build_dataloaders(num_workers=0)
-    # TO BE CONTINUED
     x, y = next(iter(train_loader))
-
     print("Train batch shape:", tuple(x.shape))
     print("Train labels shape:", tuple(y.shape))
     print("Validation batches:", len(validation_loader))

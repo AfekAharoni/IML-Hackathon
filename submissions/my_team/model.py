@@ -1,86 +1,158 @@
-
 """
-    Student model architecture.
+Student model architecture.
 
-    Students should define their model here.
-
-    Required behavior:
-        input:  torch.Tensor of shape [batch_size, 3, height, width]
-        output: torch.Tensor of shape [batch_size, 20]
-    """
+Required behavior:
+    input:  torch.Tensor of shape [batch_size, 3, height, width]
+    output: torch.Tensor of shape [batch_size, 20]
+"""
 import torch
 import torch.nn as nn
+
+
+class ResidualBlock(nn.Module):
+    """
+    A small ResNet-style block.
+
+    The main path learns new features with two convolution layers.
+    The shortcut path keeps the original input information and adds it back.
+    """
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(ResidualBlock, self).__init__()
+        self.conv_path = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=3,
+                stride=stride,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(out_channels)
+        )
+
+        self.shortcut = nn.Identity()
+
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False
+                ),
+                nn.BatchNorm2d(out_channels)
+            )
+
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        """
+        Run the residual block.
+
+        Args:
+            x: Input tensor with shape [batch_size, in_channels, height, width].
+
+        Returns:
+            Tensor with shape [batch_size, out_channels, new_height, new_width].
+
+        The output is:
+            convolution path output + shortcut path output
+        """
+        out = self.conv_path(x)
+        shortcut = self.shortcut(x)
+        out = out + shortcut
+        out = self.relu(out)
+        return out
 
 
 class ModelArchitecture(nn.Module):
     def __init__(self):
         super(ModelArchitecture, self).__init__()
 
-        # Block 1: Input size (3, 128, 128) -> Output size (32, 64, 64)
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, padding=1),
+        # Stem: Input size (3, 224, 224) -> Output size (32, 224, 224)
+        self.stem = nn.Sequential(
+            nn.Conv2d(
+                in_channels=3,
+                out_channels=32,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
             nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+            nn.ReLU()
         )
 
-        # Block 2: Input size (32, 64, 64) -> Output size (64, 32, 32)
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+        # Stage 1: Input size (32, 224, 224) -> Output size (32, 224, 224)
+        self.stage1 = nn.Sequential(
+            ResidualBlock(in_channels=32, out_channels=32, stride=1),
+            ResidualBlock(in_channels=32, out_channels=32, stride=1)
         )
 
-        # Block 3: Input size (64, 32, 32) -> Output size (128, 16, 16)
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+        # Stage 2: Input size (32, 224, 224) -> Output size (64, 112, 112)
+        self.stage2 = nn.Sequential(
+            ResidualBlock(in_channels=32, out_channels=64, stride=2),
+            ResidualBlock(in_channels=64, out_channels=64, stride=1)
         )
 
-        # Block 4: Input size (128, 16, 16) -> Output size (256, 8, 8)
-        self.conv4 = nn.Sequential(
-            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+        # Stage 3: Input size (64, 112, 112) -> Output size (128, 56, 56)
+        self.stage3 = nn.Sequential(
+            ResidualBlock(in_channels=64, out_channels=128, stride=2),
+            ResidualBlock(in_channels=128, out_channels=128, stride=1)
         )
 
-        # Block 5: Input size (256, 8, 8) -> Output size (512, 4, 4)
-        self.conv5 = nn.Sequential(
-            nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+        # Stage 4: Input size (128, 56, 56) -> Output size (256, 28, 28)
+        self.stage4 = nn.Sequential(
+            ResidualBlock(in_channels=128, out_channels=256, stride=2),
+            ResidualBlock(in_channels=256, out_channels=256, stride=1)
         )
 
-        # Global Average Pooling reduces the (512, 4, 4) spatial dimensions to (512, 1, 1)
+        # Global Average Pooling reduces (256, 28, 28) to (256, 1, 1)
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-        # Fully connected classifier with updated input features
-        self.classifier = nn.Sequential(
-            nn.Linear(in_features=512, out_features=256),
-            nn.ReLU(),
-            # Keep Dropout at 50% to prevent overfitting on this deeper network
-            nn.Dropout(p=0.5),
-            nn.Linear(in_features=256, out_features=20)
-        )
+        # Final classifier: 256 extracted features -> 20 class logits
+        self.classifier = nn.Linear(in_features=256, out_features=20)
 
     def forward(self, x):
-        # Pass input through the 5 convolutional blocks
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.conv5(x)
+        """
+        Run a forward pass through the ResNet-style CNN.
 
-        # Pool and flatten for the dense layers
+        Args:
+            x: Input image batch as a tensor with shape
+               [batch_size, 3, 224, 224]. The 3 channels are RGB.
+
+        Returns:
+            A tensor with shape [batch_size, 20]. Each row contains raw
+            class scores, called logits, for the 20 hackathon classes.
+
+        Flow:
+            1. The stem converts RGB pixels into 32 low-level feature maps.
+            2. Four residual stages extract deeper visual features.
+            3. Adaptive average pooling summarizes each feature map.
+            4. The classifier converts the final 256 features into 20 logits.
+        """
+        x = self.stem(x)
+
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+
         x = self.global_pool(x)
         x = torch.flatten(x, 1)
-
-        # Generate the final 20 class logits
         x = self.classifier(x)
 
         return x
