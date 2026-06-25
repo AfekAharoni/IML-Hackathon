@@ -1,0 +1,50 @@
+Afek Aharoni,Moria Deri,Shani Rivlin,Adi Navon
+214143414,213787617,213668007,214091498
+
+***TO BE UPDATED - ARCHITECTURE***
+
+Our model is a from-scratch convolutional image classifier for the 20-class
+hackathon task. During development, we started with simpler CNN models and a
+small number of epochs in order to verify that the full training, prediction,
+and evaluation pipeline worked correctly. After that, we made the model more
+complex while still using the same number of epochs, which at that point was
+10. This led to underfitting: the model had more capacity, but did not train
+long enough to use it well.
+
+To address this, we increased the number of epochs and experimented with 30
+epochs. This improved training performance, but we observed signs of
+overfitting, where the training loss continued improving while validation
+performance stopped improving or became less stable. We therefore chose a more
+balanced setting of ***TO BE COMPLETE*** epochs, aiming to give the model enough time to learn without fitting too strongly to the training data.
+
+We ran the training experiments on Google Colab because the training process was
+too heavy and unstable on our local computers. Using Colab allowed us to avoid
+local crashes and improve iteration time while testing different model and
+training configurations.
+
+For the data split, we initially divided the original images in a balanced,
+class-preserving way into 60% train, 20% validation, 10% test, and 10% other.
+The "other" split was kept aside while we were still deciding how to use it.
+Later, we decided to merge the "other" images into the training split, so the
+final clean split used 70% for training, 20% for validation, and 10% for local
+testing.
+
+For robustness, we used image manipulations during training through the
+"change_images_for_training.py" pipeline, which is not submitted. The training transform applies random in-memory augmentations such as random resized crop, horizontal flip, brightness/contrast/saturation/hue changes, random grayscale conversion, and small random rotations. These manipulations are meant to reduce the model's dependence on exact colors, lighting conditions, object placement, and small orientation changes.
+
+We used different preprocessing for training and validation. Training uses
+random transformations so that the same original image can appear slightly
+different across epochs. Validation uses deterministic preprocessing with
+resize, center crop, tensor conversion, and ImageNet normalization. This keeps
+validation stable and makes validation accuracy comparable across epochs.
+
+To save disk space, we did not save the randomly manipulated images as new image
+files. Instead, the images are loaded from disk, transformed temporarily in
+memory, converted into tensors, and passed to the network. After the batch is
+processed, those manipulated versions are discarded. This allowed us to expose
+the model to many visual variations without physically storing extra copies on
+the computer.
+
+We also evaluated performance separately on clean validation images and on
+augmented validation images. This helped us monitor both standard
+classification accuracy and robustness to visual manipulations.
