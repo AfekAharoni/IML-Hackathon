@@ -11,24 +11,70 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 def build_train_transform():
     """
-    Creates random in-memory image manipulations for training
-    Each image is loaded, randomly transformed,
-    converted to a tensor, normalized, and then passed to the model
+    Creates random in-memory image manipulations for training.
+
+    The goal is to make the model robust to changes that should not change the
+    class label, such as lighting, color tone, small crops, small shifts, and
+    partial occlusions.
+
+    Important:
+        The transformed images are not saved to disk. Each image is loaded,
+        changed temporarily in memory, converted to a tensor, normalized, and
+        then passed to the model.
+
+    Note:
+        More advanced background replacement, where the object is segmented and
+        placed on a different background, is a useful robustness idea. However,
+        that requires an object segmentation/background-generation pipeline, so
+        it should be implemented separately if we decide to use it.
     """
     return transforms.Compose([
+        # Resize first so all following augmentations work from a stable size.
         transforms.Resize(256),
-        transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.75, 1.0)),
-        transforms.RandomHorizontalFlip(p=0.5), # 50% probability for flip the image
+
+        # Randomly crop a small part of the image and resize back to 224x224.
+        # This simulates the object being slightly closer/farther or shifted.
+        # The crop is mild: we keep 85%-100% of the original resized image.
+        transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.85, 1.0)),
+
+        # Mirror flip left-right with 50% probability. This is the main
+        # "mirror rotation" augmentation we want to keep.
+        transforms.RandomHorizontalFlip(p=0.5),
+
+        # Mirror flip top-bottom with low probability. This is more aggressive
+        # and can be unnatural for some classes, so we keep it rare.
+        transforms.RandomVerticalFlip(p=0.05),
+
+        # Random color/lighting changes. This helps the model avoid relying too
+        # much on exact brightness, contrast, saturation, or color tone.
         transforms.RandomApply([
             transforms.ColorJitter(
-                brightness=0.4,
-                contrast=0.4,
-                saturation=0.4,
-                hue=0.08)
-        ], p=0.7), # 70% probability for changing tone/contrast etc
-        transforms.RandomGrayscale(p=0.15), #15% change to grayscale
-        transforms.RandomRotation(degrees=15), # rotate between -15 to 15 degrees
-        transforms.ToTensor(), 
+                brightness=0.45,
+                contrast=0.45,
+                saturation=0.45,
+                hue=0.06)
+        ], p=0.75),
+
+        # 10% probability to remove color information. This encourages the
+        # model to learn shape/texture cues in addition to color cues.
+        transforms.RandomGrayscale(p=0.10),
+
+        # Very small rotation only. We explicitly avoid large rotations such as
+        # 90 degrees because those can create unrealistic images for this task.
+        transforms.RandomRotation(degrees=5),
+
+        # Convert PIL image to a tensor with shape [3, 224, 224].
+        transforms.ToTensor(),
+
+        # Randomly erase a small rectangle from the tensor. This simulates
+        # partial occlusion or a small accidental crop without saving new files.
+        transforms.RandomErasing(
+            p=0.20,
+            scale=(0.02, 0.08),
+            ratio=(0.5, 2.0),
+            value="random"),
+
+        # Normalize with ImageNet statistics, matching the evaluator format.
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
 def build_eval_transform():
