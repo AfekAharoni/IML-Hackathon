@@ -21,7 +21,7 @@ OUTPUT = Path(__file__).resolve().parent / "weights.joblib"
 
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
-EPOCHS = 12  # Number of full passes over the training dataset
+EPOCHS = 15  # Target set for fast but robust convergence
 
 
 def main():
@@ -35,9 +35,6 @@ def main():
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Build DataLoaders using in-memory image manipulations from
-    # change_images_for_training.py. The training images are randomly changed
-    # every time they are loaded, then converted to tensors for the CNN.
     train_loader, clean_val_loader = build_dataloaders(
         data_root=DATA_ROOT / "train",
         batch_size=BATCH_SIZE,
@@ -53,49 +50,51 @@ def main():
     # Instantiate the model and move it to the computed device
     model = ModelArchitecture().to(device)
 
-    # Define Loss function (CrossEntropyLoss) and Optimizer (Adam)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    # Label smoothing prevents the model from being overconfident on noisy images
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+    # AdamW incorporates strict weight decay, far superior for deep ResNets
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+
+    # OneCycleLR is specifically designed to maximize accuracy in short runs (like 15 epochs)
+    scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
-        mode="min",
-        factor=0.5,
-        patience=2
+        max_lr=LEARNING_RATE * 5,  # Peak learning rate
+        steps_per_epoch=len(train_loader),
+        epochs=EPOCHS
     )
 
     # Begin the training loop
     print("Start training")
     for epoch in range(EPOCHS):
-        model.train()  # Set the model to training mode
+        model.train()
         running_loss = 0.0
 
-        # Iterate over the training batches with a progress bar
         for images, labels in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{EPOCHS}"):
-            # Move data to the corresponding device
             images, labels = images.to(device), labels.to(device)
 
-            # Forward pass: compute predicted outputs
             outputs = model(images)
             loss = criterion(outputs, labels)
 
-            # Backward pass and optimize weights
-            optimizer.zero_grad()  # Clear previous gradients
-            loss.backward()  # Compute new gradients
-            optimizer.step()  # Update weights using Adam
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # OneCycleLR MUST be stepped after every batch, not every epoch!
+            scheduler.step()
 
             running_loss += loss.item()
 
         avg_train_loss = running_loss / len(train_loader)
 
         # Validation step
-        model.eval()  # Set the model to evaluation mode
+        model.eval()
 
         # --- 1. Evaluate Clean Validation ---
         clean_val_loss = 0.0
         clean_correct = 0
         clean_total = 0
 
-        # Disable gradient calculation for validation to save memory and compute
         with torch.no_grad():
             for images, labels in clean_val_loader:
                 images, labels = images.to(device), labels.to(device)
@@ -104,7 +103,6 @@ def main():
                 loss = criterion(outputs, labels)
                 clean_val_loss += loss.item()
 
-                # Get the predicted class (the index with the highest logit)
                 _, predicted = torch.max(outputs.data, 1)
                 clean_total += labels.size(0)
                 clean_correct += (predicted == labels).sum().item()
@@ -113,8 +111,6 @@ def main():
         clean_val_accuracy = 100 * clean_correct / clean_total
 
         # --- 2. Evaluate Robust Validation ---
-        # This loader contains saved augmentation images and real validation
-        # images with our random in-memory manipulations applied.
         robust_val_loss = 0.0
         robust_correct = 0
         robust_total = 0
@@ -133,22 +129,18 @@ def main():
 
         avg_robust_val_loss = robust_val_loss / len(robust_val_loader)
         robust_val_accuracy = 100 * robust_correct / robust_total
-        combined_val_loss = (avg_clean_val_loss + avg_robust_val_loss) / 2
 
-        scheduler.step(combined_val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
 
-        # Print all metrics clearly to monitor both standard and robust performance
         print(
             f"Epoch [{epoch + 1}/{EPOCHS}] - Train Loss: {avg_train_loss:.4f} | "
             f"Clean Val Loss: {avg_clean_val_loss:.4f} | "
             f"Clean Val Acc: {clean_val_accuracy:.2f}% | "
             f"Robust Val Loss: {avg_robust_val_loss:.4f} | "
             f"Robust Val Acc: {robust_val_accuracy:.2f}% | "
-            f"LR: {current_lr:.6f}"
+            f"End LR: {current_lr:.6f}"
         )
 
-    # Move model back to CPU before saving to ensure hardware-independent loading later!
     joblib.dump(model.cpu().state_dict(), OUTPUT)
     print("Saved trained weights.joblib")
 

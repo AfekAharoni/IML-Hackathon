@@ -8,122 +8,77 @@ Required behavior:
 import torch
 import torch.nn as nn
 
-
-class ResidualBlock(nn.Module):
+class ConvBlock(nn.Module):
     """
-    Basic ResNet block:
-        conv -> batch norm -> ReLU -> conv -> batch norm -> skip add -> ReLU
+    A standard Convolutional block with optional Max Pooling.
+    Used to quickly reduce spatial dimensions and save compute time.
     """
-
-    def __init__(self, in_channels, out_channels):
-        super(ResidualBlock, self).__init__()
-
-        self.conv_path = nn.Sequential(
-            nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=3,
-                padding=1,
-                bias=False
-            ),
+    def __init__(self, in_channels, out_channels, pool=False):
+        super(ConvBlock, self).__init__()
+        layers = [
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
+            nn.ReLU()
+        ]
+        if pool:
+            layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class SimpleResBlock(nn.Module):
+    """
+    A lightweight Residual Block containing exactly 2 convolutional layers.
+    Maintains spatial dimensions while learning deeper features.
+    """
+    def __init__(self, channels):
+        super(SimpleResBlock, self).__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
             nn.ReLU(),
-
-            nn.Conv2d(
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel_size=3,
-                padding=1,
-                bias=False
-            ),
-            nn.BatchNorm2d(out_channels)
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels)
         )
-
-        self.shortcut = nn.Identity()
-        if in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    kernel_size=1,
-                    bias=False
-                ),
-                nn.BatchNorm2d(out_channels)
-            )
-
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        """
-        Run one residual block.
-
-        The convolution path learns new features, and the shortcut keeps the
-        previous representation available for easier gradient flow.
-        """
-        out = self.conv_path(x)
-        shortcut = self.shortcut(x)
-        out = out + shortcut
-        out = self.relu(out)
-        return out
+        # Skip connection: adds the original input to the output of the convolutions
+        return self.relu(self.net(x) + x)
 
 
 class ModelArchitecture(nn.Module):
     def __init__(self):
         super(ModelArchitecture, self).__init__()
 
-        # Stem: Input size (3, 224, 224) -> Output size (32, 224, 224)
-        self.stem = nn.Sequential(
-            nn.Conv2d(
-                in_channels=3,
-                out_channels=32,
-                kernel_size=3,
-                padding=1,
-                bias=False
-            ),
-            nn.BatchNorm2d(32),
-            nn.ReLU()
-        )
+        # --- LAYER 1 ---
+        # Stem: Input (3, 224, 224) -> Output (64, 112, 112)
+        self.conv1 = ConvBlock(in_channels=3, out_channels=64, pool=True)
 
-        # Pool 1: (32, 224, 224) -> (32, 112, 112)
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        # --- LAYER 2 ---
+        # Feature Extraction: (64, 112, 112) -> Output (128, 56, 56)
+        self.conv2 = ConvBlock(in_channels=64, out_channels=128, pool=True)
 
-        # Stage 1: (32, 112, 112) -> (32, 112, 112)
-        self.stage1 = nn.Sequential(
-            ResidualBlock(in_channels=32, out_channels=32),
-            ResidualBlock(in_channels=32, out_channels=32)
-        )
+        # --- LAYERS 3 & 4 ---
+        # Residual Stage 1: (128, 56, 56) -> Output (128, 56, 56)
+        self.res1 = SimpleResBlock(channels=128)
 
-        # Pool 2: (32, 112, 112) -> (32, 56, 56)
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        # --- LAYER 5 ---
+        # Downsample: (128, 56, 56) -> Output (256, 28, 28)
+        self.conv3 = ConvBlock(in_channels=128, out_channels=256, pool=True)
 
-        # Stage 2: (32, 56, 56) -> (64, 56, 56)
-        self.stage2 = nn.Sequential(
-            ResidualBlock(in_channels=32, out_channels=64),
-            ResidualBlock(in_channels=64, out_channels=64)
-        )
+        # --- LAYERS 6 & 7 ---
+        # Residual Stage 2: (256, 28, 28) -> Output (256, 28, 28)
+        self.res2 = SimpleResBlock(channels=256)
 
-        # Pool 3: (64, 56, 56) -> (64, 28, 28)
-        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # Stage 3: (64, 28, 28) -> (128, 28, 28)
-        self.stage3 = nn.Sequential(
-            ResidualBlock(in_channels=64, out_channels=128),
-            ResidualBlock(in_channels=128, out_channels=128)
-        )
-
-        # Pool 4: (128, 28, 28) -> (128, 14, 14)
-        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # Stage 4: (128, 14, 14) -> (256, 14, 14)
-        self.stage4 = nn.Sequential(
-            ResidualBlock(in_channels=128, out_channels=256),
-            ResidualBlock(in_channels=256, out_channels=256)
-        )
-
-        # Global Average Pooling: (256, 14, 14) -> (256, 1, 1)
+        # Global Average Pooling: Shrinks (256, 28, 28) into a flat (256, 1, 1) vector
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-        # Classifier: 256 extracted features -> 20 class logits
+        # --- LAYER 8 ---
+        # Classifier: Maps the 256 features to the 20 hackathon classes
         self.classifier = nn.Sequential(
             nn.Dropout(p=0.3),
             nn.Linear(in_features=256, out_features=20)
@@ -131,37 +86,22 @@ class ModelArchitecture(nn.Module):
 
     def forward(self, x):
         """
-        Run a forward pass through a half-width ResNet-18 style CNN.
-
-        Args:
-            x: Input image batch as a tensor with shape
-               [batch_size, 3, 224, 224]. The 3 channels are RGB.
-
-        Returns:
-            A tensor with shape [batch_size, 20]. Each row contains raw
-            class scores, called logits, for the 20 hackathon classes.
-
-        Flow:
-            1. Stem extracts first low-level features.
-            2. MaxPool layers reduce spatial size and increase receptive field.
-            3. Residual stages learn deeper visual features.
-            4. Global average pooling summarizes each feature map.
-            5. The classifier converts 256 features into 20 logits.
+        Forward pass optimized for maximum throughput.
         """
-        x = self.stem(x)
+        # Sequential standard convolutions for fast downsampling
+        x = self.conv1(x)
+        x = self.conv2(x)
 
-        x = self.pool1(x)
-        x = self.stage1(x)
+        # First residual block
+        x = self.res1(x)
 
-        x = self.pool2(x)
-        x = self.stage2(x)
+        # Final downsample
+        x = self.conv3(x)
 
-        x = self.pool3(x)
-        x = self.stage3(x)
+        # Second residual block
+        x = self.res2(x)
 
-        x = self.pool4(x)
-        x = self.stage4(x)
-
+        # Pool, flatten, and classify
         x = self.global_pool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
